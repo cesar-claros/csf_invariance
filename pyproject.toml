@@ -1,0 +1,44 @@
+[project]
+name = "csf-invariance"
+version = "0.1.0"
+description = "Invariance of CSFs and NC metrics under last-layer reparameterizations"
+readme = "README.md"
+requires-python = ">=3.11"
+# Local analysis and tests only. GPU runs use the paper container on the HPC.
+# Versions match the paper's local environment, so the regret path stays the same.
+dependencies = [
+    "matplotlib==3.11.1",
+    "numpy==1.26.4",
+    "orjson==3.11.9",
+    "pandas==2.2.3",
+    "pyarrow==25.0.0",
+    "scikit-learn==1.9.0",
+    "scipy==1.17.1",
+    "statsmodels==0.14.6",
+    "torch==2.13.0",
+    "torch-pca==1.1.0",
+    "torchmetrics==1.9.0",
+    "tqdm==4.69.0",
+]
+
+[dependency-groups]
+dev = ["mypy", "pytest==9.1.1", "ruff"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+extend-exclude = ["external"]
+
+[tool.ruff.lint.per-file-ignores]
+"reparam/*.py" = ["E402"]
+
+[tool.mypy]
+ignore_missing_imports = true
+follow_imports = "skip"
+exclude = ["external/"]

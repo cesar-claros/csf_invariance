@@ -1,0 +1,4 @@
+cifar100_paper_sweep/devries_bbresnet18_do0_run1_rew2.2
+cifar10_paper_sweep/devries_bbresnet18_do0_run1_rew2.2
+supercifar_paper_sweep/devries_bbresnet18_do0_run1_rew2.2
+tiny-imagenet-200_paper_sweep/devries_bbresnet18_do0_run1_rew2.2

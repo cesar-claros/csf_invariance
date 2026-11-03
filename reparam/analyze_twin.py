@@ -48,6 +48,12 @@ newcsf_heads.AGGREGATE = PAPER_CODE / "new_csfs_pilot_summary_long.csv.gz"
 
 LOGIT_ONLY = ("MSR", "MLS", "Energy", "GEN", "REN", "PCE", "GE", "PE")
 ORIGIN_FREE = (*LOGIT_ONLY, "Confidence", "fDBD", "Maha", "NeCo")
+#: Amendment A1: G1 checks only the CSFs with no refitted step (no temperature,
+#: no training features), which a rerun reproduces exactly.
+EXACT_REPRO = ("MLS", "CTM", "Confidence")
+#: Amendment A1: Maha is invariant in exact arithmetic but not in the pipeline's
+#: float32 pseudo-inverse, so G2 reports its gap and does not gate it.
+UNGATED = ("Maha",)
 NC_METRICS = ("var_collapse", "equiangular_uc", "equiangular_wc", "equinorm_uc",
               "equinorm_wc", "max_equiangular_uc", "max_equiangular_wc",
               "self_duality")
@@ -207,6 +213,22 @@ def decide(table: pd.DataFrame) -> str:
     return "C: inconclusive"
 
 
+def exact_twin(none_arm: pd.DataFrame, center_arm: pd.DataFrame) -> pd.DataFrame:
+    """Arm `center` with the origin-free CSFs taken from arm `none` (amendment A1).
+
+    By the invariance table these CSFs do not change under translation in exact
+    arithmetic on the CNN path, so this removes float32 noise from them.
+    """
+    moved = center_arm[~center_arm["csf"].isin(ORIGIN_FREE)]
+    fixed = none_arm[none_arm["csf"].isin(ORIGIN_FREE)]
+    return pd.concat([moved, fixed], ignore_index=True)
+
+
+def final_outcome(primary: str, sensitivity: str) -> str:
+    """Amendment A1: the outcome stands only if the sensitivity analysis agrees."""
+    return primary if primary == sensitivity else "C: inconclusive"
+
+
 def rank_summary(none_arm: pd.DataFrame, center_arm: pd.DataFrame) -> pd.DataFrame:
     """Spearman between arms, top-1 change, and oracle change per regime."""
     both = none_arm.merge(center_arm, on=KEYS + ["csf"], suffixes=("_none", "_center"))
@@ -279,13 +301,19 @@ def main() -> None:
     target = published[published["model_id"].isin(none_arm["model_id"])]
 
     floor = max_deviation(none_arm, target, tuple(target["csf"].unique()))
-    check_arm_gate("G1", floor[floor.index.isin(LOGIT_ONLY)], PUBLISHED_TOL)
+    exact = floor[floor.index.isin(EXACT_REPRO)]
+    check_arm_gate("G1", exact, PUBLISHED_TOL)
     invariant = max_deviation(none_arm, center_arm, ORIGIN_FREE)
-    check_arm_gate("G2", invariant, INVARIANT_TOL)
+    gated = invariant.drop(list(UNGATED), errors="ignore")
+    check_arm_gate("G2", gated, INVARIANT_TOL)
     nc_change = check_nc_gate(twin_root, experiments)
+    gates = (f"G1 passed; max gap of {', '.join(EXACT_REPRO)} to published is "
+             f"{exact.max():.2e}.\n\nG2 passed; max gap between arms is "
+             f"{gated.max():.2e}; ungated Maha gap is "
+             f"{invariant.get('Maha', float('nan')):.2e}.\n\n"
+             f"G3 passed; max relative NC change is {nc_change:.2e}.")
     if args.gates_only:
-        print(f"gates passed; max gap between arms {invariant.max():.2e}, "
-              f"max relative NC change {nc_change:.2e}")
+        print(gates.replace("\n\n", "\n"))
         print("rerun noise floor against published AUGRC:")
         print(floor.round(3).to_string())
         return
@@ -293,20 +321,23 @@ def main() -> None:
     preds = load_parquet(DEFAULT_OUT_ROOT / ABLATION_ROOT / "track1" / SPLIT / PREDICTOR
                          / "preds.parquet")
     preds = preds[preds["model_id"].isin(none_arm["model_id"])]
-    table = regime_table(scored_rows(preds, none_arm), scored_rows(preds, center_arm))
-    outcome = decide(table)
+    baseline = scored_rows(preds, none_arm)
+    table = regime_table(baseline, scored_rows(preds, center_arm))
+    sensitivity = regime_table(baseline,
+                               scored_rows(preds, exact_twin(none_arm, center_arm)))
+    outcome = final_outcome(decide(table), decide(sensitivity))
 
     by_csf = (center_arm.merge(none_arm, on=KEYS + ["csf"], suffixes=("_c", "_n"))
               .assign(change=lambda d: d["raw_augrc_c"] - d["raw_augrc_n"])
               .pivot_table(index="csf", columns="regime", values="change")
               [list(REGIMES)].round(2).sort_values("mid"))
     report([
-        ("Outcome", (f"**{outcome}**\n\n```\n"
-                    f"{table.round(3).to_string(index=False)}\n```")),
-        ("Gates", (f"G1 passed; max logit-only gap to published is "
-                  f"{floor[floor.index.isin(LOGIT_ONLY)].max():.2e}.\n\n"
-                  f"G2 passed; max gap between arms is {invariant.max():.2e}.\n\n"
-                  f"G3 passed; max relative NC change is {nc_change:.2e}.")),
+        ("Outcome", (f"**{outcome}**\n\nPrimary: {decide(table)}\n\n```\n"
+                    f"{table.round(3).to_string(index=False)}\n```\n\n"
+                    f"Sensitivity, origin-free CSFs from arm none: "
+                    f"{decide(sensitivity)}\n\n```\n"
+                    f"{sensitivity.round(3).to_string(index=False)}\n```")),
+        ("Gates (amendment A1)", gates),
         ("Rerun noise floor against published AUGRC (descriptive)",
          f"```\n{floor.round(3).to_string()}\n```"),
         ("Rank agreement between arms (descriptive)",
@@ -321,6 +352,7 @@ def main() -> None:
     ], Path(args.out))
     print(outcome)
     print(table.round(3).to_string(index=False))
+    print(sensitivity.round(3).to_string(index=False))
     print(f"wrote {args.out}")
 
 

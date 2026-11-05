@@ -136,8 +136,10 @@ def test_model_id_matches_the_pool_format() -> None:
     assert model_id(EXPERIMENT) == MODEL_ID
     other = "tiny-imagenet-200_paper_sweep/dg_bbresnet18_do0_run2_rew10.0"
     assert model_id(other) == "ResNet18|dg|tinyimagenet|2|0|10"
+    vit = "vit/super_cifar100_modelvit_bbvit_lr0.003_bs128_run2_do1_rew0"
+    assert model_id(vit) == "ViT|modelvit|supercifar100|2|1|0"
     with pytest.raises(ValueError):
-        model_id("vit/cifar10_modelvit_bbvit_lr0.01_bs128_run0_do0_rew0")
+        model_id("vit/cifar10_modelvit_bbvit_run0")
 
 
 def write_stats(root: Path, arm: str, mode: str, values: dict[str, float]) -> None:

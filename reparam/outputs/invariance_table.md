@@ -1,32 +1,32 @@
-| row | translate | scale | rotate | diagonal | linear |
-|---|---|---|---|---|---|
-| MSR | = | = | = | = | = |
-| MLS | = | = | = | = | = |
-| Energy | = | = | = | = | = |
-| GEN | = | = | = | = | = |
-| REN | = | = | = | = | = |
-| PCE | = | = | = | = | = |
-| GE | = | = | = | = | = |
-| PE | = | = | = | = | = |
-| GradNorm | x | ~ | x | x | x |
-| pNML | x | x | = | x | x |
-| CTM | x | = | = | x | x |
-| fDBD | = | = | = | x | x |
-| NNGuide | x | = | = | x | x |
-| NeCo_CNN | = | = | = | x | x |
-| NeCo_ViT | x | = | = | x | x |
-| Maha | = | = | = | = | = |
-| MahaPP | x | = | = | x | x |
-| NCI | x | x | x | x | x |
-| ViM | x | = | = | x | x |
-| Residual | x | ~ | = | x | x |
-| PCA_RecError_global | x | = | = | x | x |
-| KPCA_RecError_global | x | = | = | x | x |
-| var_collapse | = | = | = | x | x |
-| equiangular_uc | = | = | = | x | x |
-| equiangular_wc | = | = | = | x | x |
-| equinorm_uc | = | = | = | x | x |
-| equinorm_wc | = | = | = | x | x |
-| max_equiangular_uc | = | = | = | x | x |
-| max_equiangular_wc | = | = | = | x | x |
-| self_duality | = | = | = | x | x |
+| row | translate | scale | rotate | diagonal | linear | bulk |
+|---|---|---|---|---|---|---|
+| MSR | = | = | = | = | = | = |
+| MLS | = | = | = | = | = | = |
+| Energy | = | = | = | = | = | = |
+| GEN | = | = | = | = | = | = |
+| REN | = | = | = | = | = | = |
+| PCE | = | = | = | = | = | = |
+| GE | = | = | = | = | = | = |
+| PE | = | = | = | = | = | = |
+| GradNorm | x | ~ | x | x | x | x |
+| pNML | x | x | = | x | x | x |
+| CTM | x | = | = | x | x | x |
+| fDBD | = | = | = | x | x | x |
+| NNGuide | x | = | = | x | x | x |
+| NeCo_CNN | = | = | = | x | x | x |
+| NeCo_ViT | x | = | = | x | x | x |
+| Maha | = | = | = | = | = | = |
+| MahaPP | x | = | = | x | x | x |
+| NCI | x | x | x | x | x | x |
+| ViM | x | = | = | x | x | x |
+| Residual | x | ~ | = | x | x | x |
+| PCA_RecError_global | x | = | = | x | x | x |
+| KPCA_RecError_global | x | = | = | x | x | x |
+| var_collapse | = | = | = | x | x | = |
+| equiangular_uc | = | = | = | x | x | = |
+| equiangular_wc | = | = | = | x | x | = |
+| equinorm_uc | = | = | = | x | x | = |
+| equinorm_wc | = | = | = | x | x | = |
+| max_equiangular_uc | = | = | = | x | x | = |
+| max_equiangular_wc | = | = | = | x | x | = |
+| self_duality | = | = | = | x | x | = |

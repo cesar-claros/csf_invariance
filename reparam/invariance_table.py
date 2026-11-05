@@ -32,33 +32,35 @@ from scipy.stats import spearmanr
 PAPER_CODE = Path(__file__).resolve().parents[1] / "external" / "ood_systematic"
 OUT_DIR = Path(__file__).resolve().parent / "outputs"
 
-ACTIONS = ("translate", "scale", "rotate", "diagonal", "linear")
+ACTIONS = ("translate", "scale", "rotate", "diagonal", "linear", "bulk")
 NC_METRICS = (
     "var_collapse", "equiangular_uc", "equiangular_wc", "equinorm_uc",
     "equinorm_wc", "max_equiangular_uc", "max_equiangular_wc", "self_duality",
 )
 LOGIT_ONLY = ("MSR", "MLS", "Energy", "GEN", "REN", "PCE", "GE", "PE")
 
-#: translate, scale, rotate, diagonal, linear. Derivations are in
-#: ../documentation/reparam_invariance_protocol_2026-11-02.md. Maha assumes a
-#: full-rank within-class covariance; NCI is at a fixed alpha > 0.
+#: translate, scale, rotate, diagonal, linear, bulk. Derivations are in
+#: ../documentation/reparam_invariance_protocol_2026-11-02.md and, for the bulk map
+#: of `run_twin.transplant_map`, in
+#: ../documentation/spectrum_unit_scale_protocol_2026-11-04.md.
+#: Maha assumes a full-rank within-class covariance; NCI is at a fixed alpha > 0.
 EXPECTED: dict[str, str] = {
-    **{name: "=====" for name in LOGIT_ONLY},
-    "GradNorm": "x~xxx",
-    "pNML": "xx=xx",
-    "CTM": "x==xx",
-    "fDBD": "===xx",
-    "NNGuide": "x==xx",
-    "NeCo_CNN": "===xx",
-    "NeCo_ViT": "x==xx",
-    "Maha": "=====",
-    "MahaPP": "x==xx",
-    "NCI": "xxxxx",
-    "ViM": "x==xx",
-    "Residual": "x~=xx",
-    "PCA_RecError_global": "x==xx",
-    "KPCA_RecError_global": "x==xx",
-    **{name: "===xx" for name in NC_METRICS},
+    **{name: "======" for name in LOGIT_ONLY},
+    "GradNorm": "x~xxxx",
+    "pNML": "xx=xxx",
+    "CTM": "x==xxx",
+    "fDBD": "===xxx",
+    "NNGuide": "x==xxx",
+    "NeCo_CNN": "===xxx",
+    "NeCo_ViT": "x==xxx",
+    "Maha": "======",
+    "MahaPP": "x==xxx",
+    "NCI": "xxxxxx",
+    "ViM": "x==xxx",
+    "Residual": "x~=xxx",
+    "PCA_RecError_global": "x==xxx",
+    "KPCA_RecError_global": "x==xxx",
+    **{name: "===xx=" for name in NC_METRICS},
 }
 
 EXACT_TOL = 1e-6
@@ -148,6 +150,14 @@ def make_action(action: str, data: dict, seed: int = 1
         v, _ = torch.linalg.qr(torch.randn(dim, dim, generator=gen))
         singular = torch.exp(0.7 * torch.randn(dim, generator=gen))
         return u @ torch.diag(singular) @ v, zero
+    if action == "bulk":
+        from reparam.run_twin import spectrum_stats, transplant_map
+
+        profile = spectrum_stats(data["train"], data["labels"], data["w"])
+        target = [value ** 0.5 for value in profile["bulk_profile"]]
+        matrix, shift, _ = transplant_map(data["train"], data["labels"], data["w"],
+                                          target)
+        return matrix, shift
     raise ValueError(action)
 
 

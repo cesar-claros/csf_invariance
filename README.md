@@ -12,6 +12,8 @@ The paper code is a read-only submodule at `external/ood_systematic`, pinned to 
 | `reparam/run_twin.py` | Runs the unchanged paper pipeline on the centered twin of each checkpoint (HPC). |
 | `reparam/analyze_twin.py` | Checks gates G1 to G3 and applies the decision rule (local). |
 | `reparam/analyze_s0.py` | Stage S0 of the spectrum protocol: descriptors per family, pre-checks, and target profiles (local). |
+| `reparam/analyze_s1.py` | Stage S1: the ViT transport test (local). |
+| `reparam/analyze_d1.py` | Stage D1: the unit-scale tracking test (local). |
 | `reparam/experiments_*.txt` | Checkpoint lists: gate stage, main stage, and feature statistics. |
 | `reparam/outputs/` | Saved invariance table and reports. |
 | `tests/` | Unit tests. They do not need `fd_shifts` or a GPU. |
@@ -80,6 +82,48 @@ Copy `origin_stats/` to `twin_results/s0/`, then run the analysis locally:
 
 ```bash
 uv run python reparam/analyze_s0.py --stats-dir twin_results/s0/origin_stats
+```
+
+## Stages S1, S2, and D1 of the spectrum protocol
+
+The ResNet-18 arms reuse the feature cache and the `none` arm of the origin test, so S2 and D1 run one arm each. Remove the stale step markers of the old stats-only runs once before the first ViT run:
+
+```bash
+rm -rf "$TWIN_ROOT/done/none/vit" && find "$TWIN_ROOT/done/none" -type d -name '*bbvgg13*' -prune -exec rm -rf {} +
+```
+
+S2, 28 ResNet-18 models with the ViT bulk shape:
+
+```bash
+nohup python reparam/run_twin.py --experiments-file reparam/experiments_rn18_do0.txt --arms bulk_vit --out-root "$TWIN_ROOT" > twin_s2.log 2>&1 &
+```
+
+D1, 28 ResNet-18 models with standardized unit scales:
+
+```bash
+nohup python reparam/run_twin.py --experiments-file reparam/experiments_rn18_do0.txt --arms unitscale --out-root "$TWIN_ROOT" > twin_d1.log 2>&1 &
+```
+
+S1a, 8 ViT models, gates and run time only:
+
+```bash
+CSF_BATCH_SIZE=32 nohup python reparam/run_twin.py --experiments-file reparam/experiments_vit_s1a.txt --arms none bulk_vgg --out-root "$TWIN_ROOT" > twin_s1a.log 2>&1 &
+```
+
+S1b runs the same command on `reparam/experiments_vit.txt`, all 40 ViT models, after the S1a gates pass. The runner skips the 8 finished models. The control arm `bulk_away` runs only after outcome X.
+
+Run one command at a time on a GPU. Local analyses:
+
+```bash
+uv run python reparam/analyze_twin.py --twin-root twin_results/s2 --arm bulk_vit --experiments-file reparam/experiments_rn18_do0.txt
+```
+
+```bash
+uv run python reparam/analyze_d1.py --twin-root twin_results/d1 --experiments-file reparam/experiments_rn18_do0.txt
+```
+
+```bash
+uv run python reparam/analyze_s1.py --twin-root twin_results/s1 --gates-only --experiments-file reparam/experiments_vit_s1a.txt
 ```
 
 ## Analysis

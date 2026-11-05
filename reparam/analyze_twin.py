@@ -54,6 +54,15 @@ EXACT_REPRO = ("MLS", "CTM", "Confidence")
 #: Amendment A1: Maha is invariant in exact arithmetic but not in the pipeline's
 #: float32 pseudo-inverse, so G2 reports its gap and does not gate it.
 UNGATED = ("Maha",)
+#: CSFs that each map leaves unchanged in exact arithmetic (invariance table).
+BULK_FREE = (*LOGIT_ONLY, "Confidence", "Maha")
+MAP_FREE = {"center": ORIGIN_FREE, "bulk_vgg": BULK_FREE, "bulk_vit": BULK_FREE,
+            "bulk_away": BULK_FREE, "unitscale": BULK_FREE}
+#: Arms whose map keeps all 8 NC metrics, so gate G3 applies.
+NC_FIXED_ARMS = ("center", "bulk_vgg", "bulk_vit", "bulk_away")
+VIT_EXPERIMENT = (r"^vit/(?P<source>[\w-]+?)_modelvit_bbvit_lr[\d.e-]+_bs\d+"
+                  r"_run(?P<run>\d+)_do(?P<do>[01])_rew(?P<rew>[\d.]+)$")
+VIT_SOURCES = {"super_cifar100": "supercifar100", "tiny-imagenet-200": "tinyimagenet"}
 NC_METRICS = ("var_collapse", "equiangular_uc", "equiangular_wc", "equinorm_uc",
               "equinorm_wc", "max_equiangular_uc", "max_equiangular_wc",
               "self_duality")
@@ -70,11 +79,16 @@ STATS_PREFIX = "stats_RW0_RF0_ASHNone_"
 
 
 def model_id(experiment: str) -> str:
-    """Map a ResNet-18 or VGG-13 experiment path to the pool's model id.
+    """Map a ResNet-18, VGG-13, or ViT experiment path to the pool's model id.
 
     Raises:
         ValueError: If the path does not match the sweep naming.
     """
+    vit = re.match(VIT_EXPERIMENT, experiment)
+    if vit is not None:
+        source = VIT_SOURCES.get(vit["source"], vit["source"])
+        return (f"ViT|modelvit|{source}|{vit['run']}|{vit['do']}"
+                f"|{float(vit['rew']):g}")
     match = re.match(EXPERIMENT, experiment)
     if match is None:
         raise ValueError(f"unexpected experiment name: {experiment}")
@@ -137,21 +151,34 @@ def check_arm_gate(name: str, deviations: pd.Series, tolerance: float) -> None:
                            f"{failed.to_string()}")
 
 
-def check_nc_gate(twin_root: Path, experiments: list[str]) -> float:
-    """G3: largest relative change of the 8 NC metrics between arms.
+def nc_values(twin_root: Path, arm: str, experiment: str) -> dict[str, float]:
+    """The 8 NC metrics that the pipeline saved for one arm and checkpoint."""
+    path = (twin_root / arm / experiment / "params"
+            / "NeuralCollapse_params_RW0_RF0_ASHNone.pt")
+    metrics = torch.load(path, map_location="cpu")["nc_metrics"]
+    return {name: float(metrics[name]) for name in NC_METRICS}
+
+
+def nc_change(twin_root: Path, experiments: list[str], arm: str = "center") -> float:
+    """Largest relative change of the 8 NC metrics from arm `none` to `arm`."""
+    worst = 0.0
+    for experiment in experiments:
+        none = nc_values(twin_root, "none", experiment)
+        twin = nc_values(twin_root, arm, experiment)
+        for metric in NC_METRICS:
+            gap = abs(twin[metric] - none[metric])
+            worst = max(worst, gap / (abs(none[metric]) + 1e-12))
+    return worst
+
+
+def check_nc_gate(twin_root: Path, experiments: list[str],
+                  arm: str = "center") -> float:
+    """G3: the 8 NC metrics stay the same between arm `none` and `arm`.
 
     Raises:
-        RuntimeError: If the change is above NC_TOL.
+        RuntimeError: If the largest relative change is above NC_TOL.
     """
-    worst = 0.0
-    name = "NeuralCollapse_params_RW0_RF0_ASHNone.pt"
-    for experiment in experiments:
-        none, center = (torch.load(twin_root / arm / experiment / "params" / name,
-                                   map_location="cpu")["nc_metrics"]
-                        for arm in ("none", "center"))
-        for metric in NC_METRICS:
-            gap = abs(float(center[metric]) - float(none[metric]))
-            worst = max(worst, gap / (abs(float(none[metric])) + 1e-12))
+    worst = nc_change(twin_root, experiments, arm)
     if worst > NC_TOL:
         raise RuntimeError(f"G3 failed: relative NC change {worst:.3g}")
     return worst
@@ -213,14 +240,15 @@ def decide(table: pd.DataFrame) -> str:
     return "C: inconclusive"
 
 
-def exact_twin(none_arm: pd.DataFrame, center_arm: pd.DataFrame) -> pd.DataFrame:
-    """Arm `center` with the origin-free CSFs taken from arm `none` (amendment A1).
+def exact_twin(none_arm: pd.DataFrame, center_arm: pd.DataFrame,
+               csfs: tuple = ORIGIN_FREE) -> pd.DataFrame:
+    """The twin arm with its map-free CSFs taken from arm `none` (amendment A1).
 
-    By the invariance table these CSFs do not change under translation in exact
+    By the invariance table these CSFs do not change under the map in exact
     arithmetic on the CNN path, so this removes float32 noise from them.
     """
-    moved = center_arm[~center_arm["csf"].isin(ORIGIN_FREE)]
-    fixed = none_arm[none_arm["csf"].isin(ORIGIN_FREE)]
+    moved = center_arm[~center_arm["csf"].isin(csfs)]
+    fixed = none_arm[none_arm["csf"].isin(csfs)]
     return pd.concat([moved, fixed], ignore_index=True)
 
 
@@ -287,31 +315,37 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--twin-root", required=True)
     parser.add_argument("--experiments-file", required=True)
-    parser.add_argument("--out", default=str(HERE / "outputs" / "twin_report.md"))
+    parser.add_argument("--arm", default="center", choices=list(NC_FIXED_ARMS),
+                        help="twin arm compared with arm none (S2 uses bulk_vit)")
+    parser.add_argument("--out")
     parser.add_argument("--gates-only", action="store_true",
                         help="stop after the gates; read no outcome")
     args = parser.parse_args()
+    arm = args.arm
+    name = "twin_report.md" if arm == "center" else f"twin_report_{arm}.md"
+    out = Path(args.out) if args.out else HERE / "outputs" / name
+    free = MAP_FREE[arm]
     twin_root = Path(args.twin_root)
     experiments = [line.strip() for line in Path(args.experiments_file).read_text()
                    .splitlines() if line.strip() and not line.startswith("#")]
 
     *_, published, _, _ = prepare_pool(DEFAULT_OUT_ROOT)
     none_arm = with_regimes(read_arm(twin_root, "none", experiments), published)
-    center_arm = with_regimes(read_arm(twin_root, "center", experiments), published)
+    center_arm = with_regimes(read_arm(twin_root, arm, experiments), published)
     target = published[published["model_id"].isin(none_arm["model_id"])]
 
     floor = max_deviation(none_arm, target, tuple(target["csf"].unique()))
     exact = floor[floor.index.isin(EXACT_REPRO)]
     check_arm_gate("G1", exact, PUBLISHED_TOL)
-    invariant = max_deviation(none_arm, center_arm, ORIGIN_FREE)
+    invariant = max_deviation(none_arm, center_arm, free)
     gated = invariant.drop(list(UNGATED), errors="ignore")
     check_arm_gate("G2", gated, INVARIANT_TOL)
-    nc_change = check_nc_gate(twin_root, experiments)
-    gates = (f"G1 passed; max gap of {', '.join(EXACT_REPRO)} to published is "
-             f"{exact.max():.2e}.\n\nG2 passed; max gap between arms is "
+    nc_gap = check_nc_gate(twin_root, experiments, arm)
+    gates = (f"Arm {arm}.\n\nG1 passed; max gap of {', '.join(EXACT_REPRO)} to "
+             f"published is {exact.max():.2e}.\n\nG2 passed; max gap between arms is "
              f"{gated.max():.2e}; ungated Maha gap is "
              f"{invariant.get('Maha', float('nan')):.2e}.\n\n"
-             f"G3 passed; max relative NC change is {nc_change:.2e}.")
+             f"G3 passed; max relative NC change is {nc_gap:.2e}.")
     if args.gates_only:
         print(gates.replace("\n\n", "\n"))
         print("rerun noise floor against published AUGRC:")
@@ -324,7 +358,8 @@ def main() -> None:
     baseline = scored_rows(preds, none_arm)
     table = regime_table(baseline, scored_rows(preds, center_arm))
     sensitivity = regime_table(baseline,
-                               scored_rows(preds, exact_twin(none_arm, center_arm)))
+                               scored_rows(preds, exact_twin(none_arm, center_arm,
+                                                             free)))
     outcome = final_outcome(decide(table), decide(sensitivity))
 
     by_csf = (center_arm.merge(none_arm, on=KEYS + ["csf"], suffixes=("_c", "_n"))
@@ -334,7 +369,7 @@ def main() -> None:
     report([
         ("Outcome", (f"**{outcome}**\n\nPrimary: {decide(table)}\n\n```\n"
                     f"{table.round(3).to_string(index=False)}\n```\n\n"
-                    f"Sensitivity, origin-free CSFs from arm none: "
+                    f"Sensitivity, map-free CSFs from arm none: "
                     f"{decide(sensitivity)}\n\n```\n"
                     f"{sensitivity.round(3).to_string(index=False)}\n```")),
         ("Gates (amendment A1)", gates),
@@ -342,18 +377,18 @@ def main() -> None:
          f"```\n{floor.round(3).to_string()}\n```"),
         ("Rank agreement between arms (descriptive)",
          f"```\n{rank_summary(none_arm, center_arm).round(3).to_string()}\n```"),
-        ("Mean AUGRC change, center minus none (descriptive)",
+        (f"Mean AUGRC change, {arm} minus none (descriptive)",
          f"```\n{by_csf.to_string()}\n```"),
         ((f"Twin regret of the best {SHORTLIST_SIZE} CSFs known from arm none "
          "(descriptive)"),
          f"```\n{fixed_set_regret(none_arm, center_arm).round(3).to_string()}\n```"),
         ("Origin statistics per family (descriptive)",
          f"```\n{family_stats(twin_root).round(3).to_string()}\n```"),
-    ], Path(args.out))
+    ], out)
     print(outcome)
     print(table.round(3).to_string(index=False))
     print(sensitivity.round(3).to_string(index=False))
-    print(f"wrote {args.out}")
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":

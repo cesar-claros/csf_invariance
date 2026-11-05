@@ -3,10 +3,11 @@ name = "csf-invariance"
 version = "0.1.0"
 description = "Invariance of CSFs and NC metrics under last-layer reparameterizations"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.11.*"
 # Local analysis and tests only. GPU runs use the paper container on the HPC.
 # Versions match the paper's local environment, so the regret path stays the same.
 dependencies = [
+    "loguru==0.7.3",
     "matplotlib==3.11.1",
     "numpy==1.26.4",
     "orjson==3.11.9",

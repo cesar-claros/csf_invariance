@@ -10,11 +10,16 @@ import pytest
 import torch
 
 from reparam.analyze_twin import (
+    EXACT_REPRO,
     NC_METRICS,
+    ORIGIN_FREE,
+    UNGATED,
     check_arm_gate,
     check_nc_gate,
     cluster_interval,
     decide,
+    exact_twin,
+    final_outcome,
     model_id,
     read_arm,
     regime_table,
@@ -234,3 +239,28 @@ def test_regime_table_means_are_over_rows() -> None:
     center = pd.DataFrame(rows)
     table = regime_table(center.assign(regret=0.0), center)
     assert table["delta"].tolist() == [1.5, 1.5, 1.5]
+
+
+def test_amended_gate_sets() -> None:
+    assert set(EXACT_REPRO) == {"MLS", "CTM", "Confidence"}
+    assert set(UNGATED) <= set(ORIGIN_FREE)
+    assert "CTM" not in ORIGIN_FREE
+
+
+def test_exact_twin_takes_origin_free_csfs_from_arm_none() -> None:
+    keys = {"model_id": "m", "eval_dataset": "x", "regime": "near"}
+    none = pd.DataFrame([{**keys, "csf": c, "raw_augrc": 1.0} for c in ("MSR", "CTM")])
+    center = none.assign(raw_augrc=[1.1, 5.0])
+    merged = exact_twin(none, center).set_index("csf")["raw_augrc"]
+    assert merged.to_dict() == {"CTM": 5.0, "MSR": 1.0}
+
+
+@pytest.mark.parametrize(("primary", "sensitivity", "expected"), [
+    ("A: origin matters", "A: origin matters", "A: origin matters"),
+    ("B: origin immaterial", "B: origin immaterial", "B: origin immaterial"),
+    ("A: origin matters", "C: inconclusive", "C: inconclusive"),
+    ("B: origin immaterial", "A: origin matters", "C: inconclusive"),
+])
+def test_final_outcome_needs_agreement(primary: str, sensitivity: str,
+                                       expected: str) -> None:
+    assert final_outcome(primary, sensitivity) == expected

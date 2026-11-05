@@ -12,3 +12,4 @@ __pycache__/
 # Run logs and copied twin outputs
 twin_*.log
 twin_results/
+*.tgz

@@ -47,6 +47,8 @@ FAMILIES = {
 COMMON_FLAGS = ("--no-rank_weight", "--no-rank_feature", "--ash", "None",
                 "--use_cuda", "--temperature_scale")
 MANIFEST_SOURCE = {"tiny-imagenet-200": "tinyimagenet"}
+PROFILE_POINTS = 100
+BULK_FLOOR = 1e-8
 
 
 def apply_shift(evaluation: dict, shift: torch.Tensor) -> dict:
@@ -96,6 +98,61 @@ def origin_stats(encoded: torch.Tensor, labels: torch.Tensor,
     }
 
 
+def bulk_basis(class_means: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """Orthonormal basis of the complement of span(centered class means, head rows).
+
+    Args:
+        class_means: Centered class means, shape (classes, d).
+        weights: Head weights, shape (rows, d).
+
+    Returns:
+        Basis matrix, shape (d, d_perp).
+    """
+    spanning = torch.cat([class_means, weights]).T
+    left, singular, _ = torch.linalg.svd(spanning, full_matrices=True)
+    rank = int((singular > 1e-10 * singular[0]).sum())
+    return left[:, rank:]
+
+
+def spectrum_stats(encoded: torch.Tensor, labels: torch.Tensor,
+                   weights: torch.Tensor) -> dict[str, float | list[float]]:
+    """Within-class spectrum outside the class-mean and head directions (stage S0).
+
+    Directions with variance below BULK_FLOOR of the largest are counted but left out
+    of the profile, so dead units do not dominate it.
+
+    Args:
+        encoded: Training features, shape (n, d).
+        labels: Training labels, shape (n,).
+        weights: Head weights, shape (rows, d).
+
+    Returns:
+        Bulk dimension and share, floor fraction, effective rank per dimension, unit
+        scale dispersion, and the bulk profile at PROFILE_POINTS quantiles.
+    """
+    encoded = encoded.double()
+    classes, index = labels.unique(return_inverse=True)
+    sums = torch.zeros(len(classes), encoded.shape[1], dtype=encoded.dtype)
+    sums.index_add_(0, index, encoded)
+    class_means = sums / torch.bincount(index).double()[:, None]
+    within = encoded - class_means[index]
+    sigma_w = within.T @ within / len(encoded)
+    basis = bulk_basis(class_means - encoded.mean(0), weights.double().cpu())
+    bulk = torch.linalg.eigvalsh(basis.T @ sigma_w @ basis).flip(0).clamp_min(0)
+    kept = bulk[bulk > BULK_FLOOR * bulk[0]]
+    quantiles = (torch.arange(PROFILE_POINTS) + 0.5) / PROFILE_POINTS
+    positions = (quantiles * len(kept)).long()
+    unit_std = encoded.std(0)
+    return {
+        "bulk_dim": float(len(bulk)),
+        "bulk_floor_fraction": float(1 - len(kept) / len(bulk)),
+        "bulk_share": float(bulk.sum() / sigma_w.trace()),
+        "bulk_effective_rank": float(kept.sum() ** 2 / kept.pow(2).sum() / len(bulk)),
+        "unit_scale_cv": float(unit_std.std() / unit_std.mean()),
+        "bulk_profile": (kept[positions] / kept.mean()).tolist(),
+    }
+
+
 class Twin:
     """Feature cache, shift, and compensated head for one checkpoint and arm."""
 
@@ -134,7 +191,8 @@ class Twin:
                  datamodule) -> None:
         train = self._load(compute, model, datamodule, "train")
         weights, _ = last_layer(model.module, model.study_name, return_model=False)
-        stats = origin_stats(train["encoded"], train["labels"], weights)
+        stats = {**origin_stats(train["encoded"], train["labels"], weights),
+                 **spectrum_stats(train["encoded"], train["labels"], weights)}
         self.stats_path.write_text(json.dumps(stats, indent=2))
         if self.stats_only:
             raise SystemExit(0)
@@ -248,7 +306,6 @@ def run_checkpoint(experiment: str, arm: str, args: argparse.Namespace) -> bool:
     if "do1" in experiment and not args.stats_only:
         raise SystemExit(f"{experiment}: CSF runs cover dropout-off models only")
     done_dir = Path(args.out_root) / "done" / arm / experiment
-    done_dir.mkdir(parents=True, exist_ok=True)
     for step, families, mode in planned_steps(experiment, args.stats_only):
         marker = done_dir / f"{step}_{families}_{mode or 'fit'}"
         if marker.exists() and not args.stats_only:
@@ -266,7 +323,9 @@ def run_checkpoint(experiment: str, arm: str, args: argparse.Namespace) -> bool:
             logger.error("failed: %s %s %s %s %s", arm, experiment, step, families,
                          mode)
             return False
-        marker.touch()
+        if not args.stats_only:
+            done_dir.mkdir(parents=True, exist_ok=True)
+            marker.touch()
     return True
 
 

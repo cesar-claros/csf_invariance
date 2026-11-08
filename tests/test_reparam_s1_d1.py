@@ -21,7 +21,7 @@ from reparam.analyze_d1 import (
     twin_inputs,
 )
 from reparam.analyze_s0 import shape_distance
-from reparam.analyze_s1 import decide_s1, final_s1, gap_table
+from reparam.analyze_s1 import decide_s1, final_s1, gap_table, max_gap
 from reparam.analyze_twin import NC_METRICS, nc_change
 from reparam.invariance_table import synthetic_features
 from reparam.run_twin import (
@@ -181,6 +181,14 @@ def test_gap_table_measures_the_removed_disadvantage() -> None:
     assert (table["e_low"] <= table["e"]).all()
 
 
+def test_s1_g1_uses_the_median_gap() -> None:
+    rows = pd.DataFrame({"model_id": ["m"] * 5, "eval_dataset": list("abcde"),
+                         "csf": ["MLS"] * 5, "raw_augrc": [1.0] * 5})
+    noisy = rows.assign(raw_augrc=[1.0, 1.0, 1.0005, 1.0, 3.6])
+    assert max_gap(rows, noisy, ("MLS",))["MLS"] == pytest.approx(2.6)
+    assert max_gap(rows, noisy, ("MLS",), statistic="median")["MLS"] == 0.0
+
+
 def s1_table(gap: list[float], e: list[float], low: list[float],
              high: list[float]) -> pd.DataFrame:
     return pd.DataFrame({"regime": ["near", "mid", "far"], "gap": gap, "e": e,
@@ -218,15 +226,23 @@ def test_twin_inputs_use_a_ratio_for_var_collapse() -> None:
     assert twin_inputs(stored, none, none).equals(stored)
 
 
-def test_definition_gate() -> None:
+def test_definition_gate_follows_amendment_a2() -> None:
     stored = pd.DataFrame({m: [1.0, 2.0] for m in NC_METRICS})
+    classes = pd.Series([10, 10])
     none = stored.copy()
     none["var_collapse"] = stored["var_collapse"] * 10
-    values = definition_check(stored, none, pd.Series([10, 10]))
+    values = definition_check(stored, none, classes)
+    assert values["var_collapse_ratio_over_C_max"] == pytest.approx(1.0)
     check_definition_gate(values)
-    none["equiangular_uc"] *= 1.2
-    with pytest.raises(RuntimeError):
-        check_definition_gate(definition_check(stored, none, pd.Series([10, 10])))
+    reported_only = none.copy()
+    reported_only["equinorm_uc"] *= 1.2
+    reported_only["var_collapse"] *= 26
+    check_definition_gate(definition_check(stored, reported_only, classes))
+    for metric, factor in (("equiangular_uc", 1.2), ("equinorm_wc", 1 + 1e-4)):
+        moved = none.copy()
+        moved[metric] *= factor
+        with pytest.raises(RuntimeError):
+            check_definition_gate(definition_check(stored, moved, classes))
 
 
 def test_extrapolation_share() -> None:

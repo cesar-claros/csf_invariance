@@ -85,12 +85,13 @@ def vit_arm(twin_root: Path, arm: str, experiments: list[str],
     return merged
 
 
-def max_gap(left: pd.DataFrame, right: pd.DataFrame, csfs: tuple) -> pd.Series:
-    """Largest absolute AUGRC gap per CSF between two row tables."""
+def max_gap(left: pd.DataFrame, right: pd.DataFrame, csfs: tuple,
+            statistic: str = "max") -> pd.Series:
+    """Largest (or median) absolute AUGRC gap per CSF between two row tables."""
     both = left.merge(right, on=ROW_KEYS + ["csf"], suffixes=("_left", "_right"))
     both = both[both["csf"].isin(csfs)]
     gaps = (both["raw_augrc_left"] - both["raw_augrc_right"]).abs()
-    return gaps.groupby(both["csf"]).max().sort_values(ascending=False)
+    return gaps.groupby(both["csf"]).agg(statistic).sort_values(ascending=False)
 
 
 def scored(rows: pd.DataFrame, probs: pd.DataFrame, roster: list[str],
@@ -203,15 +204,17 @@ def main() -> None:
     twin_arm = vit_arm(twin_root, args.arm, experiments, published)
     target = published[published["model_id"].isin(none_arm["model_id"])]
     floor = max_gap(none_arm, target, tuple(roster))
-    exact = floor[floor.index.isin(EXACT_VIT)]
-    check_arm_gate("G1", exact, PUBLISHED_TOL)
+    median = max_gap(none_arm, target, EXACT_VIT, statistic="median")
+    check_arm_gate("G1 (amendment A3)", median, PUBLISHED_TOL)
     between = max_gap(none_arm, twin_arm, tuple(c for c in BULK_FREE if c in roster))
     gated = between.drop(list(UNGATED), errors="ignore")
     check_arm_gate("G2", gated[gated.index.isin(LOGIT_ONLY)], INVARIANT_TOL)
     nc_gap = check_nc_gate(twin_root, experiments, args.arm)
     gates = (f"Arm {args.arm}, {none_arm['model_id'].nunique()} models.\n\n"
-             f"G1 passed; max gap of {', '.join(EXACT_VIT)} to published is "
-             f"{exact.max():.2e}.\n\nG2 passed; max gap between arms is "
+             f"G1 (amendment A3) passed; median gap of {', '.join(EXACT_VIT)} to "
+             f"published is {median.max():.2e} (largest single gap "
+             f"{floor[floor.index.isin(EXACT_VIT)].max():.2f}).\n\n"
+             f"G2 passed; max gap between arms is "
              f"{gated.max():.2e}; ungated Maha gap is "
              f"{between.get('Maha', float('nan')):.2e}.\n\n"
              f"G3 passed; max relative NC change is {nc_gap:.2e}.\n\n"

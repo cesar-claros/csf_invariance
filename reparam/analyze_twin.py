@@ -300,7 +300,8 @@ def family_stats(twin_root: Path) -> pd.DataFrame:
         return pd.DataFrame()
     frame = pd.DataFrame(records)
     counts = frame.groupby("family").size().rename("models")
-    return pd.concat([counts, frame.groupby("family").median()], axis=1)
+    scalars = frame.select_dtypes("number").assign(family=frame["family"])
+    return pd.concat([counts, scalars.groupby("family").median()], axis=1)
 
 
 def report(sections: list[tuple[str, str]], path: Path) -> None:

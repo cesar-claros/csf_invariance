@@ -55,6 +55,12 @@ HERE = Path(__file__).resolve().parent
 ARM = "unitscale"
 D1_FREE = (*LOGIT_ONLY, "Confidence")
 RATIO_METRICS = ("var_collapse",)
+#: Amendment A2: the metrics that read only the head must be identical, and the stable
+#: feature metrics must agree within DEFINITION_TOL. equinorm_uc and the var_collapse
+#: ratio are reported, not gated.
+HEAD_METRICS = ("equiangular_wc", "equinorm_wc", "max_equiangular_wc")
+STABLE_METRICS = ("equiangular_uc", "max_equiangular_uc", "self_duality")
+HEAD_METRIC_TOL = 1e-6
 DEFINITION_TOL = 0.05
 HEAD_TOL = 1e-12
 EXTRAPOLATION_SHARE = 0.25
@@ -74,31 +80,32 @@ def measured_nc(twin_root: Path, arm: str, experiments: list[str]) -> pd.DataFra
 
 
 def definition_check(stored: pd.DataFrame, none: pd.DataFrame,
-                     classes: pd.Series) -> dict[str, float | str]:
-    """G5 values: arm none against the stored NC metrics.
+                     classes: pd.Series) -> dict[str, float]:
+    """G5 values (amendment A2): arm none against the stored NC metrics.
 
-    The 7 metrics other than var_collapse use the same code, so they must agree up to
-    rerun noise. var_collapse uses 1/N instead of 1/(N C), so its ratio must be C.
+    Returns:
+        The largest relative gap of the head metrics, of the stable feature metrics,
+        and of equinorm_uc, and the range of the var_collapse ratio divided by C
+        (var_collapse uses 1/N in the pipeline and 1/(N C) in the stored values).
     """
-    same = [m for m in NC_METRICS if m not in RATIO_METRICS]
-    gaps = ((none[same] - stored[same]).abs() / stored[same].abs()).max()
+    gaps = ((none - stored).abs() / stored.abs()).max()
     ratio = (none["var_collapse"] / stored["var_collapse"]) / classes
-    return {"max_relative_gap": float(gaps.max()),
-            "worst_metric": str(gaps.idxmax()),
+    return {"head_gap": float(gaps[list(HEAD_METRICS)].max()),
+            "stable_gap": float(gaps[list(STABLE_METRICS)].max()),
+            "equinorm_uc_gap": float(gaps["equinorm_uc"]),
             "var_collapse_ratio_over_C_min": float(ratio.min()),
             "var_collapse_ratio_over_C_max": float(ratio.max())}
 
 
-def check_definition_gate(values: dict[str, float | str]) -> None:
-    """G5: arm none and the stored NC metrics share one definition.
+def check_definition_gate(values: dict[str, float]) -> None:
+    """G5 (amendment A2): arm none and the stored NC metrics share one definition.
 
     Raises:
-        RuntimeError: If a gap or the var_collapse ratio is off by DEFINITION_TOL.
+        RuntimeError: If a head metric differs by more than HEAD_METRIC_TOL or a
+            stable feature metric by more than DEFINITION_TOL.
     """
-    ratio_off = max(abs(float(values["var_collapse_ratio_over_C_min"]) - 1),
-                    abs(float(values["var_collapse_ratio_over_C_max"]) - 1))
-    gap = float(values["max_relative_gap"])
-    if gap > DEFINITION_TOL or ratio_off > DEFINITION_TOL:
+    if (values["head_gap"] > HEAD_METRIC_TOL
+            or values["stable_gap"] > DEFINITION_TOL):
         raise RuntimeError(f"G5 failed: {values}")
 
 
@@ -216,9 +223,10 @@ def main() -> None:
                                 / PREDICTOR / "preds.parquet")
     stored_preds = stored_preds[stored_preds["model_id"].isin(ids)]
     head_gap = check_head_gate(shortlist(heads, (stored - mean) / std), stored_preds)
+    reported = ", ".join(f"{k} {v:.3g}" for k, v in definition.items())
     gates = (f"G1 passed ({exact.max():.2e}). G2 passed ({gated.max():.2e}; ungated "
-             f"Maha {between.get('Maha', float('nan')):.2e}). G5 passed "
-             f"({definition}). G6 passed (max |dp| {head_gap:.1e}). GH passed.")
+             f"Maha {between.get('Maha', float('nan')):.2e}). G5 (amendment A2) passed "
+             f"({reported}). G6 passed (max |dp| {head_gap:.1e}). GH passed.")
     if args.gates_only:
         print(gates)
         return

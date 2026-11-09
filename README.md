@@ -126,6 +126,24 @@ uv run python reparam/analyze_d1.py --twin-root twin_results/d1 --experiments-fi
 uv run python reparam/analyze_s1.py --twin-root twin_results/s1 --gates-only --experiments-file reparam/experiments_vit_s1a.txt
 ```
 
+## Step 1 of the placement test
+
+The script reads only the cached features, so it runs on CPU in a few minutes per model:
+
+```bash
+nohup python reparam/placement_stats.py --out-root "$TWIN_ROOT" --experiments-file reparam/experiments_vit.txt > twin_placement_vit.log 2>&1 &
+```
+
+```bash
+nohup python reparam/placement_stats.py --out-root "$TWIN_ROOT" --experiments-file reparam/experiments_rn18_do0.txt > twin_placement_rn18.log 2>&1 &
+```
+
+Copy `$TWIN_ROOT/placement_stats/` to `twin_results/placement/`, then run locally:
+
+```bash
+uv run python reparam/analyze_placement.py --placement-dir twin_results/placement --vit-root twin_results/s1b --resnet-root twin_results/main
+```
+
 ## Analysis
 
 Copy `analysis/`, `params/NeuralCollapse_*`, and `origin_stats/` from `$TWIN_ROOT` to `twin_results/`. The feature cache stays on the HPC. Then run these locally:
